@@ -54,7 +54,7 @@ def get_position_limit(ticker: str) -> Optional[float]:
     """
     url = f"{_base_url()}/markets/{ticker}"
     try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=8)
+        resp = requests.get(url, headers=_auth_headers("GET", f"/trade-api/v2/markets/{ticker}"), timeout=8)
         resp.raise_for_status()
         market = resp.json().get("market", resp.json())
         limit = market.get("position_limit") or market.get("max_position_dollars")

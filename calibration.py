@@ -57,7 +57,7 @@ def check_market_resolution(ticker: str) -> Optional[bool]:
     """
     url = f"{_base_url()}/markets/{ticker}"
     try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=10)
+        resp = requests.get(url, headers=_auth_headers("GET", f"/trade-api/v2/markets/{ticker}"), timeout=10)
         resp.raise_for_status()
         market = resp.json().get("market", resp.json())
         status = market.get("status", "")

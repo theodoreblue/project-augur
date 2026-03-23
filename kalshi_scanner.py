@@ -88,7 +88,7 @@ def fetch_weather_markets(limit: int = 200) -> list[dict]:
     Returns raw market dicts from the API.
     """
     url = f"{_base_url()}/markets"
-    headers = _auth_headers()
+    headers = _auth_headers("GET", "/trade-api/v2/markets")
     all_markets = []
     cursor = None
 

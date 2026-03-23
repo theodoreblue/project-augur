@@ -50,7 +50,7 @@ def get_open_positions() -> Optional[list[dict]]:
     """
     url = f"{_base_url()}/portfolio/positions"
     try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=10)
+        resp = requests.get(url, headers=_auth_headers("GET", "/trade-api/v2/portfolio/positions"), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         positions = data.get("market_positions", data.get("positions", []))

@@ -58,7 +58,7 @@ def get_live_balance() -> Optional[float]:
     """
     url = f"{_base_url()}/portfolio/balance"
     try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=10)
+        resp = requests.get(url, headers=_auth_headers("GET", "/trade-api/v2/portfolio/balance"), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         # balance field is in cents as integer or dollar string depending on version
@@ -79,7 +79,7 @@ def get_position_limit(ticker: str) -> Optional[float]:
     """
     url = f"{_base_url()}/markets/{ticker}"
     try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=10)
+        resp = requests.get(url, headers=_auth_headers("GET", f"/trade-api/v2/markets/{ticker}"), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         market = data.get("market", data)

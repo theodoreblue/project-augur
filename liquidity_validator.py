@@ -74,7 +74,7 @@ def get_order_book(ticker: str) -> Optional[dict]:
     """
     url = f"{_base_url()}/markets/{ticker}/orderbook"
     try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=8)
+        resp = requests.get(url, headers=_auth_headers("GET", f"/trade-api/v2/markets/{ticker}/orderbook"), timeout=8)
         resp.raise_for_status()
         return resp.json().get("orderbook", resp.json())
     except Exception as e:
