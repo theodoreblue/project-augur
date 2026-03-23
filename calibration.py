@@ -31,8 +31,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-KALSHI_BASE      = "https://api.elections.kalshi.com/trade-api/v2"
-KALSHI_DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2"
+KALSHI_BASE      = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
+KALSHI_DEMO_BASE = os.getenv("KALSHI_DEMO_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
 
 
 def _base_url() -> str:

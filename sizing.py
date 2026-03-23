@@ -34,8 +34,8 @@ _log = logging.getLogger(__name__)
 MAX_KELLY_PCT    = 0.05    # 5% hard cap per trade
 MIN_BET_DOLLARS  = 1.0     # minimum $1 per trade
 MAX_BET_DOLLARS  = 500.0   # absolute ceiling per trade
-KALSHI_BASE      = "https://api.elections.kalshi.com/trade-api/v2"
-KALSHI_DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2"
+KALSHI_BASE      = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
+KALSHI_DEMO_BASE = os.getenv("KALSHI_DEMO_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
 
 
 def _base_url() -> str:
