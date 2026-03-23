@@ -41,11 +41,9 @@ def _base_url() -> str:
     return KALSHI_BASE
 
 
-def _auth_headers() -> dict:
-    return {
-        "Authorization": f"Bearer {os.getenv('KALSHI_API_KEY', '')}",
-        "Content-Type": "application/json",
-    }
+def _auth_headers(method: str = "GET", path: str = "/trade-api/v2") -> dict:
+    from kalshi_auth import get_auth_headers
+    return get_auth_headers(method, path)
 
 
 def check_market_resolution(ticker: str) -> Optional[bool]:

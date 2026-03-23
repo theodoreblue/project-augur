@@ -54,12 +54,9 @@ WEATHER_KEYWORDS = [
 
 # ── Auth header ───────────────────────────────────────────────────────────────
 
-def _auth_headers() -> dict:
-    api_key = os.getenv("KALSHI_API_KEY", "")
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+def _auth_headers(method: str = "GET", path: str = "/trade-api/v2/markets") -> dict:
+    from kalshi_auth import get_auth_headers
+    return get_auth_headers(method, path)
 
 
 def _base_url() -> str:
