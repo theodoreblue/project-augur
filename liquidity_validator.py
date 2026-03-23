@@ -67,60 +67,58 @@ def _log_skipped(ticker: str, question: str, reason: str) -> None:
 def get_order_book(ticker: str) -> Optional[dict]:
     """
     Fetch order book for a Kalshi market.
-    Returns dict with 'yes' and 'no' lists of {price, delta} levels.
-    Returns None on error.
-
+    Kalshi orderbook endpoint is public — no auth required.
+    Returns raw orderbook_fp dict or None on error.
     This is a PASSIVE, READ-ONLY call. No orders are placed.
     """
     url = f"{_base_url()}/markets/{ticker}/orderbook"
     try:
-        resp = requests.get(url, headers=_auth_headers("GET", f"/trade-api/v2/markets/{ticker}/orderbook"), timeout=8)
+        resp = requests.get(url, timeout=8)
+        if resp.status_code == 401:
+            resp = requests.get(url, headers=_auth_headers("GET", f"/trade-api/v2/markets/{ticker}/orderbook"), timeout=8)
         resp.raise_for_status()
-        return resp.json().get("orderbook", resp.json())
+        data = resp.json()
+        return data.get("orderbook_fp", data.get("orderbook", data))
     except Exception as e:
         _log.debug(f"Order book fetch failed for {ticker}: {e}")
         return None
 
 
-def calculate_yes_depth(orderbook: dict, target_price: float, levels: int = 3) -> float:
+def calculate_yes_depth(orderbook: dict, target_price: float, levels: int = 10) -> float:
     """
-    Calculate available YES liquidity (in USD) at or below target_price
-    by reading the top N price levels from the yes (bid) side.
-
-    Kalshi orderbook 'yes' entries represent bids to buy YES contracts.
-    Each entry: {"price": int (cents), "delta": int (contract count)}
-
-    Args:
-        orderbook:    Raw orderbook dict from Kalshi API
-        target_price: Our intended buy price (0.0-1.0 dollars)
-        levels:       Number of price levels to aggregate
-
-    Returns:
-        Total USD liquidity available at/near target price
+    Calculate available YES liquidity (in USD) near the target price.
+    Kalshi orderbook_fp format: yes_dollars: [[price_str, size_str], ...]
     """
-    yes_levels = orderbook.get("yes", [])
+    yes_levels = orderbook.get("yes_dollars", orderbook.get("yes", []))
     if not yes_levels:
         return 0.0
 
-    target_cents = int(target_price * 100)
     total_usd = 0.0
     count = 0
 
-    # Sort by price descending (best bids first)
-    sorted_levels = sorted(yes_levels, key=lambda x: -int(x.get("price", 0)))
+    try:
+        if isinstance(yes_levels[0], list):
+            sorted_levels = sorted(yes_levels, key=lambda x: -float(x[0]))
+        else:
+            sorted_levels = sorted(yes_levels, key=lambda x: -float(x.get("price", 0)))
+    except Exception:
+        return 0.0
 
     for level in sorted_levels:
         if count >= levels:
             break
-        price_cents = int(level.get("price", 0))
-        delta = int(level.get("delta", 0))  # number of contracts at this price
-
-        # Only count levels at or above our target (we're buying, want cheap YES)
-        if price_cents <= target_cents + 5:  # 5-cent tolerance
-            price_dollars = price_cents / 100
-            usd_at_level = delta * price_dollars  # 1 contract = $1 notional
-            total_usd += usd_at_level
-            count += 1
+        try:
+            if isinstance(level, list):
+                price = float(level[0])
+                size  = float(level[1])
+            else:
+                price = float(level.get("price", 0))
+                size  = float(level.get("delta", level.get("size", 0)))
+            if abs(price - target_price) <= 0.30:
+                total_usd += size * price
+                count += 1
+        except Exception:
+            continue
 
     return round(total_usd, 2)
 
