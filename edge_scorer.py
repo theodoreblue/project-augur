@@ -32,7 +32,7 @@ _log = logging.getLogger(__name__)
 MIN_EDGE_RATIO = 2.0    # true_prob / yes_price must be >= 2x
 MIN_EDGE_ABS   = 0.03   # absolute edge (true_prob - price) >= 3%
 
-KALSHI_BASE      = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_BASE      = "https://api.elections.kalshi.com/trade-api/v2"
 KALSHI_DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2"
 
 

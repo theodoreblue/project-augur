@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-KALSHI_BASE      = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_BASE      = "https://api.elections.kalshi.com/trade-api/v2"
 KALSHI_DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2"
 
 

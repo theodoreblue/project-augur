@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 _log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-KALSHI_BASE          = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_BASE          = "https://api.elections.kalshi.com/trade-api/v2"
 KALSHI_DEMO_BASE     = "https://demo-api.kalshi.co/trade-api/v2"
 
 MIN_HOURS            = 2.0    # ignore markets resolving sooner

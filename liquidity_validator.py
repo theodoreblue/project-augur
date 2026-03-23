@@ -38,7 +38,7 @@ _log = logging.getLogger(__name__)
 
 DEPTH_MULTIPLIER = 3.0    # require depth >= 3x intended bet
 SKIPPED_LOG      = "skipped.log"
-KALSHI_BASE      = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_BASE      = "https://api.elections.kalshi.com/trade-api/v2"
 KALSHI_DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2"
 
 

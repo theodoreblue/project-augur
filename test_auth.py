@@ -13,7 +13,7 @@ from cryptography.hazmat.backends import default_backend
 
 load_dotenv()
 
-BASE = "https://trading-api.kalshi.com/trade-api/v2"
+BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 def load_key():
     path = os.getenv("KALSHI_PRIVATE_KEY_PATH", "")

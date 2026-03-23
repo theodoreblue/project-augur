@@ -28,7 +28,7 @@ load_dotenv()
 _log = logging.getLogger(__name__)
 
 MAX_OPEN_POSITIONS = 3
-KALSHI_BASE        = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_BASE        = "https://api.elections.kalshi.com/trade-api/v2"
 KALSHI_DEMO_BASE   = "https://demo-api.kalshi.co/trade-api/v2"
 
 
