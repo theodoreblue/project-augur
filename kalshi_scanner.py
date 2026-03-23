@@ -49,6 +49,28 @@ WEATHER_KEYWORDS = [
     "rain", "snow", "temperature", "temp", "degrees", "fahrenheit",
     "celsius", "precipitation", "wind", "storm", "hurricane",
     "heat", "cold", "freeze", "frost", "flood", "high of", "low of",
+    "maximum temperature", "minimum temperature", "max temperature",
+    "highest temperature", "lowest temperature", "will the high",
+    "will the low", "will it snow", "will it rain",
+]
+
+# Known Kalshi weather series tickers — use these to fetch markets directly
+# More reliable than keyword filtering since Kalshi categorizes inconsistently
+WEATHER_SERIES = [
+    "KXHIGHTPHX", "KXHIGHNY", "KXHIGHNY0", "KXHIGHMIA", "KXHIGHCHI",
+    "KXHIGHDEN", "KXHIGHHOU", "KXHIGHLAX", "KXHIGHAUS", "KXHIGHTSEA",
+    "KXHIGHTDAL", "KXHIGHTSATX", "KXHIGHTMIN", "KXHIGHTOKC", "KXHIGHTEMPDEN",
+    "KXHIGHTHOU", "KXHIGHTATL", "KXHIGHTSFO", "KXHIGHPHIL", "KXPHILHIGH",
+    "KXHOUHIGH", "KXHIGHOU", "KXDENHIGH",
+    "HIGHNY", "HIGHNY0", "HIGHCHI", "HIGHMIA", "HIGHAUS",
+    "KXLOWNYC", "KXLOWNY", "KXLOWLAX", "KXLOWTLAX", "KXLOWCHI",
+    "KXLOWTCHI", "KXLOWDEN", "KXLOWTDEN", "KXLOWMIA", "KXLOWTMIA",
+    "KXLOWAUS", "KXLOWTAUS", "KXLOWPHIL", "KXLOWTPHIL",
+    "KXSNOWNYC", "KXSNOWNY", "KXSNOWNYM", "SNOWNY", "SNOWNYM",
+    "KXNYCSNOWM", "KXCHISNOWM", "SNOWCHIM", "KXSNOWCHIM",
+    "KXDENSNOWM", "KXSEASNOWM", "KXHOUSNOWM", "KXLAXSNOWM",
+    "KXDALSNOWM", "KXAUSSNOWM", "KXSFOSNOWM", "KXMIASNOWM", "KXSNOWAZ",
+    "KXRAINNYCM", "RAINNYCM", "KXCITIESWEATHER",
 ]
 
 
@@ -83,67 +105,49 @@ def _log_skipped(ticker: str, question: str, reason: str) -> None:
 
 def fetch_weather_markets(limit: int = 200) -> list[dict]:
     """
-    Fetch active markets from Kalshi, filtered to weather category.
-    Paginates until we have enough or run out.
+    Fetch active weather markets from Kalshi by querying known weather series
+    tickers directly. This is more reliable than keyword filtering since Kalshi
+    categorizes weather markets under specific series (e.g. KXHIGHTPHX, KXHIGHNY).
     Returns raw market dicts from the API.
     """
     url = f"{_base_url()}/markets"
-    headers = _auth_headers("GET", "/trade-api/v2/markets")
     all_markets = []
-    cursor = None
 
-    _log.info("Fetching weather markets from Kalshi...")
+    _log.info("Fetching weather markets from Kalshi via series tickers...")
 
-    while len(all_markets) < limit:
-        params = {
-            "status": "open",
-            "limit": min(200, limit - len(all_markets)),
-        }
-        # Try category filter first; Kalshi may use event_category or series_category
-        params["event_category"] = "weather"
-        if cursor:
-            params["cursor"] = cursor
-
+    # Fetch markets from each known weather series
+    for series_ticker in WEATHER_SERIES:
+        if len(all_markets) >= limit:
+            break
         try:
-            resp = requests.get(url, headers=headers, params=params, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.exceptions.HTTPError as e:
-            # If category filter fails, fall back to keyword scan of all markets
-            if e.response is not None and e.response.status_code == 400:
-                _log.warning("Category filter rejected — falling back to keyword scan")
-                params.pop("event_category", None)
-                resp = requests.get(url, headers=headers, params=params, timeout=15)
-                resp.raise_for_status()
-                data = resp.json()
-            else:
-                _log.error(f"Failed to fetch markets: {e}")
-                return []
+            h = _auth_headers("GET", "/trade-api/v2/markets")
+            params = {
+                "status": "open",
+                "series_ticker": series_ticker,
+                "limit": 20,
+            }
+            resp = requests.get(url, headers=h, params=params, timeout=10)
+            if resp.status_code == 200:
+                markets = resp.json().get("markets", [])
+                if markets:
+                    all_markets.extend(markets)
+                    _log.debug(f"  {series_ticker}: {len(markets)} markets")
+            time.sleep(0.05)  # gentle rate limit
         except Exception as e:
-            _log.error(f"Failed to fetch markets: {e}")
-            return []
+            _log.debug(f"  {series_ticker}: error — {e}")
+            continue
 
-        markets = data.get("markets", [])
-        if not markets:
-            break
+    # Deduplicate by ticker
+    seen = set()
+    deduped = []
+    for m in all_markets:
+        t = m.get("ticker", "")
+        if t not in seen:
+            seen.add(t)
+            deduped.append(m)
 
-        all_markets.extend(markets)
-        cursor = data.get("cursor")
-        if not cursor:
-            break
-
-        time.sleep(0.1)  # gentle rate limit
-
-    _log.info(f"Raw markets fetched: {len(all_markets)}")
-
-    # Keyword filter for weather content
-    weather = [
-        m for m in all_markets
-        if any(kw in (m.get("title", "") + m.get("rules_primary", "")).lower()
-               for kw in WEATHER_KEYWORDS)
-    ]
-    _log.info(f"Weather markets after keyword filter: {len(weather)}")
-    return weather
+    _log.info(f"Weather markets fetched: {len(deduped)} from {len(WEATHER_SERIES)} series")
+    return deduped
 
 
 # ── Time-to-resolution filter ─────────────────────────────────────────────────
