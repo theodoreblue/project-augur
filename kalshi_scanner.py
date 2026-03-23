@@ -165,8 +165,9 @@ def filter_by_time_window(markets: list[dict]) -> list[dict]:
         ticker = m.get("ticker", "")
         question = m.get("title", "")
 
-        # Prefer expiration_time, fall back to close_time
-        raw = m.get("expiration_time") or m.get("close_time") or ""
+        # Use expected_expiration_time (actual resolution) or close_time.
+        # expiration_time is the legal deadline (often 7+ days out) — ignore it.
+        raw = m.get("expected_expiration_time") or m.get("close_time") or ""
         if not raw:
             _log_skipped(ticker, question, "no_resolution_time")
             continue
