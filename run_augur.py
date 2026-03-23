@@ -300,7 +300,7 @@ def main():
         _log.info("Project AUGUR starting in DRY RUN mode (no real orders)")
     else:
         _log.info("Project AUGUR starting in LIVE mode — real orders will be placed")
-        required = ["KALSHI_API_KEY"]
+        required = ["KALSHI_KEY_ID", "KALSHI_PRIVATE_KEY_PATH"]
         missing  = [k for k in required if not os.getenv(k)]
         if missing:
             _log.error(f"Missing required env vars: {missing}")
