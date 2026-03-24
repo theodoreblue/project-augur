@@ -10,7 +10,7 @@ Purpose:
     no crypto wallet required.
 
 Kalshi API endpoints used:
-    POST /trade-api/v2/orders  — place a new order
+    POST /trade-api/v2/portfolio/orders  — place a new order
 
 Regulatory constraints (CFTC):
     - No wash trading: never simultaneously place buy and sell on same contract
@@ -165,8 +165,8 @@ def place_order(
         _log_trade(signal, bet_size, fake_order_id, dry_run=True)
         return True
 
-    url     = f"{_base_url()}/orders"
-    headers = _auth_headers()
+    url     = f"{_base_url()}/portfolio/orders"
+    headers = _auth_headers("POST", "/trade-api/v2/portfolio/orders")
     payload = _build_order_payload(signal, bet_size)
 
     for attempt in range(MAX_RETRIES + 1):
