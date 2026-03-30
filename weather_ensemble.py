@@ -19,14 +19,24 @@ CACHE_DIR = Path(__file__).parent / ".weather_cache"
 CACHE_TTL = 3600
 
 CITIES = {
-    "Phoenix": {"lat": 33.4484, "lon": -112.0740},
-    "New York": {"lat": 40.7128, "lon": -74.0060},
-    "Chicago": {"lat": 41.8781, "lon": -87.6298},
-    "Miami": {"lat": 25.7617, "lon": -80.1918},
-    "Dallas": {"lat": 32.7767, "lon": -96.7970},
-    "Seattle": {"lat": 47.6062, "lon": -122.3321},
-    "Denver": {"lat": 39.7392, "lon": -104.9903},
-    "Atlanta": {"lat": 33.7490, "lon": -84.3880},
+    "Phoenix":        {"lat": 33.4484, "lon": -112.0740},
+    "New York":       {"lat": 40.7128, "lon": -74.0060},
+    "NYC":            {"lat": 40.7128, "lon": -74.0060},
+    "Chicago":        {"lat": 41.8781, "lon": -87.6298},
+    "Miami":          {"lat": 25.7617, "lon": -80.1918},
+    "Dallas":         {"lat": 32.7767, "lon": -96.7970},
+    "Seattle":        {"lat": 47.6062, "lon": -122.3321},
+    "Denver":         {"lat": 39.7392, "lon": -104.9903},
+    "Atlanta":        {"lat": 33.7490, "lon": -84.3880},
+    "Los Angeles":    {"lat": 34.0522, "lon": -118.2437},
+    "LA":             {"lat": 34.0522, "lon": -118.2437},
+    "Austin":         {"lat": 30.2672, "lon": -97.7431},
+    "San Antonio":    {"lat": 29.4241, "lon": -98.4936},
+    "Minneapolis":    {"lat": 44.9778, "lon": -93.2650},
+    "Oklahoma City":  {"lat": 35.4676, "lon": -97.5164},
+    "Houston":        {"lat": 29.7604, "lon": -95.3698},
+    "San Francisco":  {"lat": 37.7749, "lon": -122.4194},
+    "Philadelphia":   {"lat": 39.9526, "lon": -75.1652},
 }
 
 N_MEMBERS = 25  # ICON seamless ensemble size
