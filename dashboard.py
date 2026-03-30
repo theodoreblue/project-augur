@@ -231,10 +231,17 @@ def api_balance():
 def api_positions():
     count = _kalshi_positions()
     state = _load_state()
+    # Also count unresolved trades from signals.log
+    signals = _load_signals()
+    live_unresolved = sum(1 for s in signals
+                         if not s.get("dry_run", False) and not s.get("outcome"))
+
     return jsonify({
-        "open_positions": count,
+        "open_positions": count if count is not None else live_unresolved,
+        "kalshi_count": count,
+        "signals_unresolved": live_unresolved,
         "state_open": len(state.get("open_trades", [])),
-        "source": "kalshi_api" if count is not None else "state_file",
+        "source": "kalshi_api" if count is not None else "signals_log",
     })
 
 

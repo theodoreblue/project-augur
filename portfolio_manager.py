@@ -54,8 +54,17 @@ def get_open_positions() -> Optional[list[dict]]:
         resp.raise_for_status()
         data = resp.json()
         positions = data.get("market_positions", data.get("positions", []))
-        # Only count positions where we hold contracts (quantity > 0)
-        open_pos = [p for p in positions if int(p.get("quantity", 0)) > 0]
+        # Count positions where we hold any contracts (YES or NO side)
+        open_pos = []
+        for p in positions:
+            qty = int(p.get("quantity", 0))
+            yes_count = int(p.get("yes_count", p.get("total_traded", 0)))
+            no_count = int(p.get("no_count", 0))
+            rest = int(p.get("resting_orders_count", 0))
+            settled = p.get("settlement_status", "")
+            # Position is open if any quantity held or resting orders exist
+            if qty != 0 or yes_count > 0 or no_count > 0 or (rest > 0 and settled != "settled"):
+                open_pos.append(p)
         return open_pos
     except Exception as e:
         _log.warning(f"Could not fetch portfolio positions: {e}")
