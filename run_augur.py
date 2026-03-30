@@ -48,7 +48,7 @@ from market_mapper       import align_markets
 from liquidity_validator import validate_batch
 from weather_ensemble    import fetch_ensemble, bracket_probability, ensemble_stats
 from edge_scorer         import score_all, check_reentry
-from sizing              import size_bet
+from sizing              import size_bet, get_live_balance
 from kalshi_executor     import place_order
 from portfolio_manager   import available_slots
 from calibration         import (check_market_resolution, log_resolution,
@@ -205,6 +205,17 @@ def _log_signal(signal: dict) -> None:
 def run_cycle(state: dict, dry_run: bool = True) -> dict:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     state["cycles_run"] += 1
+
+    # Step 0: Sync bankroll from live Kalshi balance
+    live_bal = get_live_balance()
+    if live_bal is not None:
+        if abs(live_bal - state["bankroll"]) > 0.01:
+            _log.info(f"Bankroll sync: local=${state['bankroll']:.2f} → live=${live_bal:.2f}")
+        state["bankroll"] = live_bal
+        save_state(state)
+    else:
+        _log.warning("Could not fetch live balance — using local state")
+
     _log.info(f"=== AUGUR Cycle #{state['cycles_run']} | {now} | "
               f"bankroll=${state['bankroll']:.2f} ===")
 

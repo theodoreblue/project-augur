@@ -18,8 +18,10 @@ Regulatory constraints:
     - All credentials from environment variables
 """
 
+import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -29,8 +31,10 @@ load_dotenv()
 
 _log = logging.getLogger(__name__)
 
-MIN_EDGE_RATIO = 2.0    # true_prob / yes_price must be >= 2x
-MIN_EDGE_ABS   = 0.03   # absolute edge (true_prob - price) >= 3%
+MIN_EDGE_RATIO   = 2.0    # true_prob / yes_price must be >= 2x
+MIN_EDGE_ABS     = 0.03   # absolute edge (true_prob - price) >= 3%
+MIN_TRUE_PROB    = 0.65   # minimum confidence threshold — reject below 65%
+SKIPPED_LOG      = "skipped.log"
 
 KALSHI_BASE      = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
 KALSHI_DEMO_BASE = os.getenv("KALSHI_DEMO_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
@@ -86,6 +90,11 @@ def score_market(
     if yes_price <= 0 or true_prob <= 0:
         return None
 
+    # Minimum confidence filter — reject low-probability signals
+    if true_prob < MIN_TRUE_PROB:
+        _log_low_confidence(ticker, market.get("title", ""), true_prob, yes_price)
+        return None
+
     ratio = true_prob / yes_price
     edge  = true_prob - yes_price
 
@@ -128,6 +137,20 @@ def score_market(
         "position_limit":   position_limit,
         "hours_to_resolution": market.get("_hours_to_resolution"),
     }
+
+
+def _log_low_confidence(ticker: str, question: str, true_prob: float, yes_price: float) -> None:
+    """Log rejected low-confidence signals to skipped.log."""
+    with open(SKIPPED_LOG, "a") as f:
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "ticker": ticker,
+            "question": question,
+            "reason": f"low_confidence: true_prob={true_prob:.3f} < {MIN_TRUE_PROB} "
+                      f"(yes_price={yes_price:.4f}, ratio would be {true_prob/yes_price:.2f}x)",
+        }
+        f.write(json.dumps(entry) + "\n")
+    _log.debug(f"Rejected {ticker}: true_prob={true_prob:.1%} < {MIN_TRUE_PROB:.0%} minimum")
 
 
 def score_market_no_side(
@@ -274,6 +297,10 @@ def score_all(
         Sorted list of signal dicts (best score first), including NO signals
     """
     signals = []
+    no_evaluated = 0
+    best_no_ratio = 0.0
+    no_qualified = 0
+
     for m in markets:
         ticker = m.get("ticker", "")
         tp = true_probs.get(ticker)
@@ -287,10 +314,24 @@ def score_all(
             sig["side"] = "YES"
             signals.append(sig)
 
-        # NO side
+        # NO side — evaluate and track debug stats
+        yes_price = m.get("_yes_price", 0)
+        if yes_price > 0 and tp is not None:
+            no_evaluated += 1
+            no_price = 1.0 - yes_price
+            no_true_prob = 1.0 - tp
+            if no_true_prob > 0:
+                this_no_ratio = no_price / no_true_prob
+                best_no_ratio = max(best_no_ratio, this_no_ratio)
+
         no_sig = score_market_no_side(m, tp, intended_bet=intended_bet)
         if no_sig:
+            no_qualified += 1
             signals.append(no_sig)
+
+    # NO-side debug logging
+    _log.info(f"NO-side evaluation: {no_evaluated} markets checked, "
+              f"best ratio {best_no_ratio:.2f}x, {no_qualified} qualified")
 
     signals.sort(key=lambda s: -s["score"])
     yes_count = sum(1 for s in signals if s.get("side") == "YES")
