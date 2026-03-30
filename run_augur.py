@@ -53,6 +53,7 @@ from kalshi_executor     import place_order
 from portfolio_manager   import available_slots
 from calibration         import (check_market_resolution, log_resolution,
                                  daily_calibration_cycle, rolling_brier_score)
+from safety_checks       import check_heat_wave, check_nws_divergence, check_market_momentum
 
 load_dotenv()
 
@@ -98,20 +99,23 @@ def save_state(state: dict) -> None:
 
 # ── Ensemble probability for a market ─────────────────────────────────────────
 
-def compute_true_prob(market: dict) -> float:
+def compute_true_prob(market: dict) -> tuple[float, list[float]]:
     """
     Fetch Open-Meteo ensemble for this market's city/date and compute
     true probability for the market's specific threshold.
+
+    Returns:
+        (probability, ensemble_members) — members list for safety checks
     """
     city = market.get("location")
     if not city:
-        return 0.0
+        return 0.0, []
 
     try:
         ensemble = fetch_ensemble(city)
     except Exception as e:
         _log.warning(f"Ensemble fetch failed for {city}: {e}")
-        return 0.0
+        return 0.0, []
 
     # Get member max temps for the resolution date
     res_date = (market.get("resolution_dt") or "")[:10]
@@ -123,25 +127,25 @@ def compute_true_prob(market: dict) -> float:
             members = ensemble["dates"][dates[0]]
 
     if not members:
-        return 0.0
+        return 0.0, []
 
     metric = market.get("metric", "temp")
     ttype  = market.get("threshold_type", "bracket")
     lo     = market.get("bracket_low")
     hi     = market.get("bracket_high")
 
+    prob = 0.0
     if metric == "temp":
         if ttype == "bracket":
-            return bracket_probability(members, lo, hi)
+            prob = bracket_probability(members, lo, hi)
         elif ttype == "upper":
-            return bracket_probability(members, lo, None)
+            prob = bracket_probability(members, lo, None)
         elif ttype == "lower":
-            return bracket_probability(members, None, hi)
+            prob = bracket_probability(members, None, hi)
+    else:
+        _log.debug(f"Metric '{metric}' not fully modeled — skipping probability calc")
 
-    # Rain/snow: rough proxy using ensemble percentages
-    # (extend weather_ensemble.py for full rain support in future)
-    _log.debug(f"Metric '{metric}' not fully modeled — skipping probability calc")
-    return 0.0
+    return prob, members
 
 
 # ── Calibration check ─────────────────────────────────────────────────────────
@@ -258,13 +262,45 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
         _log.info("No markets passed liquidity check.")
         return state
 
-    # Step 7: Compute true probabilities via Open-Meteo ensemble
+    # Step 7: Compute true probabilities + safety checks
     true_probs: dict[str, float] = {}
+    size_multipliers: dict[str, float] = {}  # safety-adjusted sizing
+    safety_skips: set[str] = set()
+
     for m in liquid:
         ticker = m.get("ticker", "")
-        tp = compute_true_prob(m)
-        if tp > 0:
-            true_probs[ticker] = tp
+        tp, members = compute_true_prob(m)
+        if tp <= 0:
+            continue
+        true_probs[ticker] = tp
+
+        city = m.get("location", "")
+        res_date = (m.get("resolution_dt") or "")[:10]
+
+        # Safety check 1: Heat wave detection
+        if members and city:
+            hw = check_heat_wave(city, members, res_date)
+            size_multipliers[ticker] = hw["size_multiplier"]
+            if hw["flagged"]:
+                _log.info(f"Heat wave flag on {ticker} — size reduced to {hw['size_multiplier']:.0%}")
+
+        # Safety check 2: NWS cross-check
+        lat = m.get("lat", 0)
+        lon = m.get("lon", 0)
+        if lat and lon and members:
+            ens_mean = sum(members) / len(members)
+            nws = check_nws_divergence(city, lat, lon, ens_mean, res_date)
+            if nws["skip"]:
+                safety_skips.add(ticker)
+                _log.info(f"NWS divergence skip: {ticker} — "
+                          f"ensemble={nws['ensemble_mean']}°F vs NWS={nws['nws_high']}°F")
+
+    # Remove NWS-skipped markets
+    if safety_skips:
+        liquid = [m for m in liquid if m.get("ticker") not in safety_skips]
+        for t in safety_skips:
+            true_probs.pop(t, None)
+        _log.info(f"Safety: skipped {len(safety_skips)} markets due to NWS divergence")
 
     # Step 8: Edge scoring (YES + NO sides)
     signals = score_all(liquid, true_probs, intended_bet=default_bet)
@@ -313,6 +349,14 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
             fetch_live_balance = not dry_run,
         )
         bet = sizing["bet_size"]
+
+        # Apply safety size multiplier (heat wave reduction)
+        safety_mult = size_multipliers.get(ticker, 1.0)
+        if safety_mult < 1.0:
+            original_bet = bet
+            bet = round(bet * safety_mult, 2)
+            _log.info(f"Safety sizing: ${original_bet:.2f} → ${bet:.2f} "
+                      f"({safety_mult:.0%} of normal, heat wave flag)")
         if bet <= 0:
             _log.info(f"Sizing returned $0 for {ticker} — skip")
             continue
@@ -375,6 +419,21 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
                     save_state(state)
                     _log.info(f"Add-on position: {addon['ticker']} +${addon_bet:.2f} | "
                               f"{addon.get('note', '')}")
+
+    # Step 11: Market momentum check on all open positions
+    for trade in state["open_trades"]:
+        momentum = check_market_momentum(
+            ticker=trade.get("ticker", ""),
+            entry_price=trade.get("yes_price", 0),
+            side=trade.get("side", "YES"),
+        )
+        if momentum.get("flagged"):
+            _log.warning(
+                f"⚠️ MOMENTUM ALERT: {trade['ticker']} — "
+                f"entry={momentum['entry_price']:.4f} → "
+                f"current={momentum['current_price']:.4f} "
+                f"({momentum['move_pct']:.1%} adverse move)"
+            )
 
     return state
 
