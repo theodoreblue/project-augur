@@ -267,6 +267,128 @@ def daily_calibration_cycle(open_trades: list[dict]) -> list[dict]:
     return still_open
 
 
+def check_model_drift() -> dict:
+    """
+    Check for model drift:
+    1. If Brier Score worsens 3 consecutive weeks → pause live betting
+    2. If a specific city has Brier > 0.5 over last 10 bets → flag as unreliable
+
+    Returns:
+        {
+            "pause_recommended": bool,
+            "unreliable_cities": list[str],
+            "weekly_trend": list[tuple[str, float]],
+        }
+    """
+    result = {
+        "pause_recommended": False,
+        "unreliable_cities": [],
+        "weekly_trend": [],
+    }
+
+    # Check weekly Brier trend
+    records = load_records(since_days=28)
+    if not records:
+        return result
+
+    weekly: dict[str, list[dict]] = {}
+    for r in records:
+        try:
+            ts = datetime.fromisoformat(r["ts"])
+            week_label = f"{ts.isocalendar()[0]}-W{ts.isocalendar()[1]:02d}"
+        except Exception:
+            continue
+        weekly.setdefault(week_label, []).append(r)
+
+    weekly_scores = []
+    for week in sorted(weekly.keys()):
+        recs = weekly[week]
+        bs = round(sum(r["brier_score"] for r in recs) / len(recs), 4)
+        weekly_scores.append((week, bs))
+
+    result["weekly_trend"] = weekly_scores
+
+    # Check 3 consecutive weeks of degradation
+    if len(weekly_scores) >= 3:
+        consecutive_worse = 0
+        for i in range(1, len(weekly_scores)):
+            if weekly_scores[i][1] > weekly_scores[i - 1][1]:
+                consecutive_worse += 1
+            else:
+                consecutive_worse = 0
+
+            if consecutive_worse >= 2:
+                result["pause_recommended"] = True
+                _log.warning(
+                    "⚠️ MODEL DRIFT DETECTED: Brier Score degraded 3+ consecutive weeks. "
+                    "RECOMMENDING PAUSE ON LIVE BETTING. "
+                    f"Recent: {', '.join(f'{w}={b:.4f}' for w, b in weekly_scores[-3:])}"
+                )
+
+                # Write pause flag
+                pause_entry = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "type": "drift_pause",
+                    "weekly_scores": weekly_scores[-3:],
+                    "action": "LIVE BETTING PAUSED — investigate model drift",
+                }
+                with open(CALIBRATION_LOG, "a") as f:
+                    f.write(json.dumps(pause_entry) + "\n")
+                break
+
+    # Check per-city Brier scores
+    city_scores: dict[str, list[float]] = {}
+    for r in records:
+        city = r.get("city", "unknown")
+        city_scores.setdefault(city, []).append(r.get("brier_score", 0))
+
+    for city, scores in city_scores.items():
+        if len(scores) >= 10:
+            avg = sum(scores) / len(scores)
+            if avg > 0.5:
+                result["unreliable_cities"].append(city)
+                _log.warning(
+                    f"⚠️ UNRELIABLE CITY: {city} Brier={avg:.3f} over "
+                    f"{len(scores)} bets → flagged for skip"
+                )
+
+    return result
+
+
+def is_live_paused() -> bool:
+    """Check if live betting should be paused due to model drift."""
+    if not os.path.exists(CALIBRATION_LOG):
+        return False
+    # Check last 10 entries for a pause flag
+    try:
+        with open(CALIBRATION_LOG) as f:
+            lines = f.readlines()
+        for line in reversed(lines[-20:]):
+            try:
+                entry = json.loads(line.strip())
+                if entry.get("type") == "drift_pause":
+                    return True
+                if entry.get("type") == "drift_resume":
+                    return False
+            except json.JSONDecodeError:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def resume_live_betting():
+    """Clear the drift pause flag."""
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "type": "drift_resume",
+        "action": "Live betting resumed after investigation",
+    }
+    with open(CALIBRATION_LOG, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    _log.info("Live betting resumed — drift pause cleared")
+
+
 def weekly_summary() -> str:
     """
     Print a weekly calibration summary showing:

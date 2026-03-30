@@ -52,7 +52,8 @@ from sizing              import size_bet, get_live_balance
 from kalshi_executor     import place_order
 from portfolio_manager   import available_slots
 from calibration         import (check_market_resolution, log_resolution,
-                                 daily_calibration_cycle, rolling_brier_score)
+                                 daily_calibration_cycle, rolling_brier_score,
+                                 check_model_drift, is_live_paused)
 from safety_checks       import check_heat_wave, check_nws_divergence, check_market_momentum
 
 load_dotenv()
@@ -231,6 +232,21 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
         _log.info("6am EST model update window — running daily calibration cycle")
         state["open_trades"] = daily_calibration_cycle(state["open_trades"])
         save_state(state)
+
+    # Step 1c: Check model drift — pause live betting if degraded
+    if not dry_run and is_live_paused():
+        _log.warning("⚠️ LIVE BETTING PAUSED due to model drift. "
+                     "Investigate calibration before resuming.")
+        return state
+
+    # Step 1d: Load strategy parameters from optimizer
+    try:
+        from optimizer import load_strategy
+        strategy = load_strategy()
+        _log.info(f"Strategy v{strategy.get('version', 1)} loaded | "
+                  f"edge={strategy['min_edge_ratio']}x prob={strategy['min_true_prob']:.0%}")
+    except Exception:
+        strategy = None
 
     # Step 2: Peak hours check
     if not is_peak_hours():

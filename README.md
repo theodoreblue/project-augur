@@ -17,18 +17,33 @@ Automated weather-based prediction market bot for Kalshi (CFTC-regulated).
 | `portfolio_manager.py` | Live position count from Kalshi API |
 | `calibration.py` | Brier Score tracking, rolling weekly scores, degradation warnings |
 
+## Self-Improving Strategy Engine
+
+| File | Purpose |
+|---|---|
+| `resolver.py` | Hourly cron — auto-detects outcomes, writes to signals.log, triggers post-mortems |
+| `postmortem.py` | Generates detailed post-mortem for every resolved bet (ensemble vs actual) |
+| `optimizer.py` | Weekly Sunday cron — auto-adjusts edge ratio, probability floor, city weights |
+| `safety_checks.py` | Heat wave detection, NWS cross-check, momentum circuit breaker |
+
 ## Log Files
 
 | File | Purpose |
 |---|---|
 | `augur.log` | Main application log |
-| `signals.log` | All trade signals (YES, NO, add-on) |
-| `skipped.log` | Markets filtered out (time, size, liquidity) |
-| `calibration.log` | Resolved bets + weekly Brier scores |
+| `signals.log` | All trade signals with outcomes (YES, NO, add-on, won/lost) |
+| `skipped.log` | Markets filtered out (time, size, liquidity, low confidence) |
+| `calibration.log` | Resolved bets + weekly Brier scores + drift alerts |
+| `postmortem.log` | Detailed post-mortem for every resolved bet |
+| `optimizer.log` | All strategy parameter changes with reasoning |
+| `safety.log` | Heat wave flags, NWS divergence events, momentum alerts |
 | `near_miss.log` | Markets passing 2x liquidity but failing 3x |
 | `mapping_audit.log` | Every mapped market with threshold, variable, unit conversion |
 | `unmatched.log` | Markets that failed question parsing |
 | `errors.log` | Order execution errors |
+| `strategy.json` | Current strategy parameters (auto-updated by optimizer) |
+| `strategy_history.json` | Version history of all strategy changes |
+| `weekly_report.txt` | Monday morning performance report |
 
 ## Key Features
 

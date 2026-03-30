@@ -172,6 +172,37 @@
   <span class="btn-status" id="run-status"></span>
 </div>
 
+<div class="stats" id="strategy-bar" style="padding-top:0">
+  <div class="stat-card" style="grid-column:1/-1;padding:12px 20px">
+    <div class="label">Strategy Version</div>
+    <div style="display:flex;gap:24px;align-items:center;margin-top:4px">
+      <span id="s-version" style="color:var(--green);font-size:18px;font-weight:700">v1</span>
+      <span style="color:var(--text-dim);font-size:12px">Edge: <strong id="s-edge-thresh">2.0x</strong></span>
+      <span style="color:var(--text-dim);font-size:12px">Min Prob: <strong id="s-prob-thresh">65%</strong></span>
+      <span style="color:var(--text-dim);font-size:12px">Anomaly: <strong id="s-anomaly-thresh">15°F</strong></span>
+      <span id="s-drift-warning" style="color:var(--red);font-size:12px;display:none">⚠️ MODEL DRIFT — LIVE PAUSED</span>
+    </div>
+  </div>
+</div>
+
+<!-- City Performance -->
+<div class="table-wrap" style="padding-bottom:16px">
+  <h2>City Performance</h2>
+  <table>
+    <thead><tr><th>City</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>P&L</th><th>Avg Brier</th></tr></thead>
+    <tbody id="city-body"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+  </table>
+</div>
+
+<!-- Postmortem Tab -->
+<div class="table-wrap" style="padding-bottom:16px">
+  <h2>Recent Post-Mortems</h2>
+  <table>
+    <thead><tr><th>Date</th><th>City</th><th>Side</th><th>Outcome</th><th>Actual Temp</th><th>Ensemble Prob</th><th>Error</th><th>Anomaly</th></tr></thead>
+    <tbody id="pm-body"><tr><td colspan="8" class="empty-state">No post-mortems yet</td></tr></tbody>
+  </table>
+</div>
+
 <div class="table-wrap">
   <h2>Trade Log</h2>
   <table>
@@ -215,13 +246,17 @@ function fmtTime(ts) {
 
 async function refresh() {
   try {
-    const [statsR, tradesR, balR, posR] = await Promise.all([
-      fetch('/api/stats'), fetch('/api/trades'), fetch('/api/balance'), fetch('/api/positions')
+    const [statsR, tradesR, balR, posR, stratR, cityR, pmR] = await Promise.all([
+      fetch('/api/stats'), fetch('/api/trades'), fetch('/api/balance'), fetch('/api/positions'),
+      fetch('/api/strategy'), fetch('/api/city-performance'), fetch('/api/postmortems')
     ]);
     const stats = await statsR.json();
     const trades = await tradesR.json();
     const bal = await balR.json();
     const pos = await posR.json();
+    const strat = await stratR.json();
+    const cities = await cityR.json();
+    const postmortems = await pmR.json();
 
     // Stats
     const bankroll = bal.live_balance ?? bal.state_balance;
@@ -238,6 +273,48 @@ async function refresh() {
     document.getElementById('s-winrate').textContent = stats.win_rate + '%';
     document.getElementById('s-winrate-sub').textContent = `${stats.wins}W / ${stats.losses}L`;
     document.getElementById('s-edge').textContent = stats.best_edge + 'x';
+
+    // Strategy
+    document.getElementById('s-version').textContent = 'v' + (strat.version || 1);
+    document.getElementById('s-edge-thresh').textContent = (strat.min_edge_ratio || 2.0) + 'x';
+    document.getElementById('s-prob-thresh').textContent = ((strat.min_true_prob || 0.65) * 100).toFixed(0) + '%';
+    document.getElementById('s-anomaly-thresh').textContent = (strat.anomaly_threshold_f || 15) + '°F';
+
+    // City Performance
+    const cityBody = document.getElementById('city-body');
+    if (cities.length > 0) {
+      cityBody.innerHTML = cities.map(c => `
+        <tr>
+          <td>${c.city}</td>
+          <td style="color:var(--green)">${c.wins}</td>
+          <td style="color:var(--red)">${c.losses}</td>
+          <td>${c.win_rate}%</td>
+          <td style="color:${c.pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt$(c.pnl)}</td>
+          <td style="color:${c.avg_brier > 0.5 ? 'var(--red)' : c.avg_brier > 0.25 ? 'var(--orange)' : 'var(--green)'}">${c.avg_brier.toFixed(4)}</td>
+        </tr>
+      `).join('');
+    } else {
+      cityBody.innerHTML = '<tr><td colspan="6" class="empty-state">No city data yet</td></tr>';
+    }
+
+    // Post-Mortems
+    const pmBody = document.getElementById('pm-body');
+    if (postmortems.length > 0) {
+      pmBody.innerHTML = postmortems.reverse().map(pm => `
+        <tr class="${pm.outcome}">
+          <td>${pm.date || '—'}</td>
+          <td>${pm.city || '—'}</td>
+          <td><span class="side-${(pm.side||'YES').toLowerCase()}">${pm.side || 'YES'}</span></td>
+          <td>${pm.outcome === 'won' ? '✅ WIN' : '❌ LOSS'}</td>
+          <td>${pm.actual_temperature ? pm.actual_temperature + '°F' : '—'}</td>
+          <td>${pm.ensemble_confidence || '—'}</td>
+          <td>${pm.error_delta_temp_f != null ? pm.error_delta_temp_f + '°F' : '—'}</td>
+          <td>${pm.anomaly_flag ? '⚠️ YES' : '—'}</td>
+        </tr>
+      `).join('');
+    } else {
+      pmBody.innerHTML = '<tr><td colspan="8" class="empty-state">No post-mortems yet</td></tr>';
+    }
 
     // Trades
     const tbody = document.getElementById('trades-body');

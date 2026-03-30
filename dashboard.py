@@ -30,10 +30,12 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 _log = logging.getLogger(__name__)
 
-SIGNALS_LOG     = os.path.join(os.path.dirname(__file__), "signals.log")
-CALIBRATION_LOG = os.path.join(os.path.dirname(__file__), "calibration.log")
-STATE_FILE      = os.path.join(os.path.dirname(__file__), "augur_state.json")
-AUGUR_DIR       = os.path.dirname(os.path.abspath(__file__))
+SIGNALS_LOG      = os.path.join(os.path.dirname(__file__), "signals.log")
+CALIBRATION_LOG  = os.path.join(os.path.dirname(__file__), "calibration.log")
+STATE_FILE       = os.path.join(os.path.dirname(__file__), "augur_state.json")
+STRATEGY_FILE    = os.path.join(os.path.dirname(__file__), "strategy.json")
+POSTMORTEM_LOG   = os.path.join(os.path.dirname(__file__), "postmortem.log")
+AUGUR_DIR        = os.path.dirname(os.path.abspath(__file__))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -123,17 +125,35 @@ def api_stats():
     no_bets = sum(1 for s in signals if s.get("side") == "NO")
     dry_runs = sum(1 for s in signals if s.get("dry_run", False))
 
-    # Resolved outcomes from calibration
-    wins = sum(1 for c in calibration if c.get("actual_outcome") is True)
-    losses = sum(1 for c in calibration if c.get("actual_outcome") is False)
-    total_pnl = sum(c.get("pnl", 0) for c in calibration)
+    # Resolved outcomes from signals.log (resolver.py writes these)
+    resolved_signals = [s for s in signals if s.get("outcome")]
+    wins = sum(1 for s in resolved_signals if s.get("outcome") == "won")
+    losses = sum(1 for s in resolved_signals if s.get("outcome") == "lost")
+    total_pnl = sum(s.get("pnl", 0) for s in resolved_signals)
+
+    # Fallback to calibration.log if signals.log has no outcomes yet
+    if not resolved_signals and calibration:
+        wins = sum(1 for c in calibration if c.get("actual_outcome") is True)
+        losses = sum(1 for c in calibration if c.get("actual_outcome") is False)
+        total_pnl = sum(c.get("pnl", 0) for c in calibration)
 
     # Best edge from signals
     best_edge = max((s.get("ratio", 0) for s in signals), default=0)
 
-    resolved_tickers = {c.get("market_id") for c in calibration}
+    # P&L from live balance vs starting bankroll
+    starting = float(os.getenv("STARTING_BANKROLL", "50.0"))
+    state = _load_state()
+    live_pnl = state.get("bankroll", starting) - starting
+    # Use the more accurate source
+    if resolved_signals:
+        display_pnl = total_pnl
+    else:
+        display_pnl = live_pnl
+
+    resolved_tickers = {s.get("ticker") for s in resolved_signals}
     open_count = sum(1 for s in signals
                      if not s.get("dry_run", False)
+                     and not s.get("outcome")
                      and s.get("ticker") not in resolved_tickers)
 
     win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
@@ -146,7 +166,7 @@ def api_stats():
         "wins": wins,
         "losses": losses,
         "open_count": open_count,
-        "total_pnl": round(total_pnl, 2),
+        "total_pnl": round(display_pnl, 2),
         "win_rate": round(win_rate, 1),
         "best_edge": round(best_edge, 2),
     })
@@ -216,6 +236,93 @@ def api_positions():
         "state_open": len(state.get("open_trades", [])),
         "source": "kalshi_api" if count is not None else "state_file",
     })
+
+
+@app.route("/api/strategy")
+def api_strategy():
+    """Return current strategy version and parameters."""
+    if os.path.exists(STRATEGY_FILE):
+        try:
+            with open(STRATEGY_FILE) as f:
+                return jsonify(json.load(f))
+        except Exception:
+            pass
+    return jsonify({"version": 1, "status": "default"})
+
+
+@app.route("/api/city-performance")
+def api_city_performance():
+    """Return win rate and P&L per city."""
+    calibration = _load_calibration()
+    cities: dict[str, dict] = {}
+    for c in calibration:
+        city = c.get("city", "unknown")
+        if city not in cities:
+            cities[city] = {"wins": 0, "losses": 0, "pnl": 0, "brier_sum": 0, "count": 0}
+        if c.get("actual_outcome") is True:
+            cities[city]["wins"] += 1
+        elif c.get("actual_outcome") is False:
+            cities[city]["losses"] += 1
+        cities[city]["pnl"] += c.get("pnl", 0)
+        cities[city]["brier_sum"] += c.get("brier_score", 0)
+        cities[city]["count"] += 1
+
+    result = []
+    for city, stats in sorted(cities.items()):
+        total = stats["wins"] + stats["losses"]
+        result.append({
+            "city": city,
+            "wins": stats["wins"],
+            "losses": stats["losses"],
+            "win_rate": round(stats["wins"] / total * 100, 1) if total > 0 else 0,
+            "pnl": round(stats["pnl"], 2),
+            "avg_brier": round(stats["brier_sum"] / stats["count"], 4) if stats["count"] > 0 else 0,
+        })
+    return jsonify(result)
+
+
+@app.route("/api/postmortems")
+def api_postmortems():
+    """Return the last 10 post-mortem entries."""
+    if not os.path.exists(POSTMORTEM_LOG):
+        return jsonify([])
+    records = []
+    with open(POSTMORTEM_LOG) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return jsonify(records[-10:])
+
+
+@app.route("/api/brier-trend")
+def api_brier_trend():
+    """Return Brier Score trend by week."""
+    calibration = _load_calibration()
+    if not calibration:
+        return jsonify([])
+
+    weekly: dict[str, list[float]] = {}
+    for c in calibration:
+        try:
+            ts = datetime.fromisoformat(c["ts"])
+            week = f"{ts.isocalendar()[0]}-W{ts.isocalendar()[1]:02d}"
+            weekly.setdefault(week, []).append(c.get("brier_score", 0))
+        except Exception:
+            continue
+
+    trend = []
+    for week in sorted(weekly.keys()):
+        scores = weekly[week]
+        trend.append({
+            "week": week,
+            "brier_score": round(sum(scores) / len(scores), 4),
+            "n_bets": len(scores),
+        })
+    return jsonify(trend)
 
 
 @app.route("/api/run", methods=["POST"])
