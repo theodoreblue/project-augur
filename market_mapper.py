@@ -31,7 +31,24 @@ from datetime import datetime, timezone
 from typing import Optional
 
 _log = logging.getLogger(__name__)
-UNMATCHED_LOG = "unmatched.log"
+UNMATCHED_LOG     = "unmatched.log"
+MAPPING_AUDIT_LOG = "mapping_audit.log"
+
+# Metric → Open-Meteo variable and unit conversion documentation
+_METEO_MAPPING = {
+    "temp": {
+        "variable": "temperature_2m",
+        "unit_conversion": "°C → °F via (C * 9/5 + 32)",
+    },
+    "rain": {
+        "variable": "precipitation",
+        "unit_conversion": "mm (no conversion)",
+    },
+    "snow": {
+        "variable": "snowfall",
+        "unit_conversion": "cm (no conversion)",
+    },
+}
 
 # ── City → lat/lon lookup ─────────────────────────────────────────────────────
 CITY_COORDS: dict[str, dict] = {
@@ -269,7 +286,30 @@ def align_market(market: dict) -> Optional[dict]:
         "resolution_dt":  res_dt.isoformat(),
         "_aligned":       True,
     })
+
+    # Mapping audit log
+    meteo_info = _METEO_MAPPING.get(thresh["metric"], {"variable": "unknown", "unit_conversion": "unknown"})
+    _log_mapping_audit(
+        ticker=ticker,
+        question=question,
+        city=city,
+        metric=thresh["metric"],
+        threshold_type=thresh["type"],
+        bracket_low=thresh["low"],
+        bracket_high=thresh["high"],
+        resolution_dt=res_dt.isoformat(),
+        open_meteo_variable=meteo_info["variable"],
+        unit_conversion=meteo_info["unit_conversion"],
+    )
+
     return enriched
+
+
+def _log_mapping_audit(**kwargs) -> None:
+    """Log mapping audit entry for manual spot-checking."""
+    entry = {"ts": datetime.now(timezone.utc).isoformat(), **kwargs}
+    with open(MAPPING_AUDIT_LOG, "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 def align_markets(markets: list[dict]) -> list[dict]:

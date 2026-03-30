@@ -40,8 +40,9 @@ _log = logging.getLogger(__name__)
 KALSHI_BASE          = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
 KALSHI_DEMO_BASE     = os.getenv("KALSHI_DEMO_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
 
-MIN_HOURS            = 2.0    # ignore markets resolving sooner
-MAX_HOURS            = 72.0   # ignore markets resolving later
+MIN_HOURS                  = 2.0    # ignore markets resolving sooner
+MAX_HOURS                  = 72.0   # ignore markets resolving later
+MAX_HOURS_HIGH_CONVICTION  = 96.0   # extended window for edge ratio >= 5x
 MAX_CONTRACT_PCT     = 0.02   # skip if min contract > 2% of bankroll
 SKIPPED_LOG          = "skipped.log"
 
@@ -86,6 +87,42 @@ def _base_url() -> str:
     if os.getenv("KALSHI_USE_DEMO", "false").lower() == "true":
         return KALSHI_DEMO_BASE
     return KALSHI_BASE
+
+
+# ── Peak Hours Logic ──────────────────────────────────────────────────────────
+
+def is_peak_hours() -> bool:
+    """
+    Check if current time is within peak liquidity window.
+    Peak: 12pm–8pm EST (17:00–01:00 UTC).
+    Also returns True during the 6am EST model-update window (±15 min).
+    """
+    now = datetime.now(timezone.utc)
+    utc_hour = now.hour
+    utc_minute = now.minute
+
+    # 6am EST = 11:00 UTC — dedicated scan window (±15 min)
+    if utc_hour == 10 and utc_minute >= 45:
+        return True
+    if utc_hour == 11 and utc_minute <= 15:
+        return True
+
+    # 12pm EST = 17:00 UTC, 8pm EST = 01:00 UTC (next day)
+    # So peak is 17:00–23:59 UTC and 00:00–01:00 UTC
+    if utc_hour >= 17 or utc_hour < 1:
+        return True
+
+    return False
+
+
+def is_model_update_window() -> bool:
+    """Check if we're in the 6am EST (11:00 UTC) model update window."""
+    now = datetime.now(timezone.utc)
+    if now.hour == 10 and now.minute >= 45:
+        return True
+    if now.hour == 11 and now.minute <= 15:
+        return True
+    return False
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -154,9 +191,9 @@ def fetch_weather_markets(limit: int = 200) -> list[dict]:
 
 def filter_by_time_window(markets: list[dict]) -> list[dict]:
     """
-    Keep only markets resolving between MIN_HOURS and MAX_HOURS from now.
-    Kalshi uses close_time (when market closes to trading) and
-    expiration_time (when it resolves).
+    Keep only markets resolving between MIN_HOURS and MAX_HOURS_HIGH_CONVICTION from now.
+    Markets in the 72–96h range are tagged _extended_window=True so the caller
+    can filter them out unless edge ratio >= 5x.
     """
     now = datetime.now(timezone.utc)
     valid = []
@@ -165,8 +202,6 @@ def filter_by_time_window(markets: list[dict]) -> list[dict]:
         ticker = m.get("ticker", "")
         question = m.get("title", "")
 
-        # Use expected_expiration_time (actual resolution) or close_time.
-        # expiration_time is the legal deadline (often 7+ days out) — ignore it.
         raw = m.get("expected_expiration_time") or m.get("close_time") or ""
         if not raw:
             _log_skipped(ticker, question, "no_resolution_time")
@@ -179,16 +214,19 @@ def filter_by_time_window(markets: list[dict]) -> list[dict]:
             _log_skipped(ticker, question, "unparseable_resolution_time")
             continue
 
-        if hours < MIN_HOURS or hours > MAX_HOURS:
+        if hours < MIN_HOURS or hours > MAX_HOURS_HIGH_CONVICTION:
             _log_skipped(ticker, question,
-                         f"time_window: {hours:.1f}h outside {MIN_HOURS}-{MAX_HOURS}h")
+                         f"time_window: {hours:.1f}h outside {MIN_HOURS}-{MAX_HOURS_HIGH_CONVICTION}h")
             continue
 
         m["_hours_to_resolution"] = round(hours, 2)
         m["_resolution_dt"] = res_dt.isoformat()
+        m["_extended_window"] = hours > MAX_HOURS
         valid.append(m)
 
-    _log.info(f"Time filter: {len(valid)}/{len(markets)} markets in 2-72h window")
+    extended = sum(1 for m in valid if m.get("_extended_window"))
+    _log.info(f"Time filter: {len(valid)}/{len(markets)} markets in window "
+              f"({extended} in extended 72-96h range)")
     return valid
 
 
@@ -268,16 +306,21 @@ def extract_prices(markets: list[dict]) -> list[dict]:
 
 # ── Main scanner entry point ──────────────────────────────────────────────────
 
-def scan_markets(bankroll: float = 50.0) -> list[dict]:
+def scan_markets(bankroll: float = 50.0, skip_peak_check: bool = False) -> list[dict]:
     """
     Full scanner pipeline:
-    1. Fetch weather markets from Kalshi
-    2. Time-to-resolution filter (2-72h)
-    3. Minimum contract size filter
-    4. Price extraction
+    1. Peak hours check (skip scan if off-peak)
+    2. Fetch weather markets from Kalshi
+    3. Time-to-resolution filter (2-96h, extended window tagged)
+    4. Minimum contract size filter
+    5. Price extraction
 
     Returns list of market dicts ready for market_mapper.py
     """
+    if not skip_peak_check and not is_peak_hours():
+        _log.info("Off-peak hours, skipping scan.")
+        return []
+
     markets = fetch_weather_markets()
     if not markets:
         _log.warning("No markets returned from Kalshi. Check API key and connectivity.")

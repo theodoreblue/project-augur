@@ -72,7 +72,7 @@ def _log_trade(signal: dict, bet_size: float, order_id: str,
         "location":        signal.get("location"),
         "date":            signal.get("date"),
         "metric":          signal.get("metric"),
-        "side":            "YES",
+        "side":            signal.get("side", "YES"),
         "yes_price":       signal.get("yes_price"),
         "true_prob":       signal.get("true_prob"),
         "edge":            signal.get("edge"),
@@ -114,15 +114,16 @@ def _build_order_payload(signal: dict, bet_size: float) -> dict:
         count:      number of contracts (1 contract = $1 notional at max)
         yes_price:  limit price in cents (integer, 1-99)
 
-    We buy YES contracts. count = USD bet size (since $1 notional per contract).
+    We buy YES or NO contracts. count = USD bet size (since $1 notional per contract).
     """
+    side = signal.get("side", "YES").lower()
     yes_price_cents = max(1, min(99, round(signal["yes_price"] * 100)))
     count = max(1, round(bet_size))  # 1 contract = $1 notional
 
     return {
         "ticker":    signal["ticker"],
         "action":    "buy",
-        "side":      "yes",
+        "side":      side,
         "type":      "limit",
         "count":     count,
         "yes_price": yes_price_cents,

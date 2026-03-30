@@ -130,13 +130,140 @@ def score_market(
     }
 
 
+def score_market_no_side(
+    market: dict,
+    true_prob: float,
+    intended_bet: float = 5.0,
+) -> Optional[dict]:
+    """
+    Score a market for NO-side edge.
+
+    Generates a NO signal if:
+    - true_prob < 0.5 (event is unlikely)
+    - (1 - yes_price) / (1 - true_prob) >= 2.0
+
+    The NO contract costs (1 - yes_price) and pays $1 if event doesn't happen.
+    """
+    ticker    = market.get("ticker", "")
+    yes_price = market.get("_yes_price", 0)
+
+    if yes_price <= 0 or yes_price >= 1 or true_prob >= 0.5:
+        return None
+
+    no_price = 1.0 - yes_price
+    no_true_prob = 1.0 - true_prob
+
+    if no_true_prob <= 0:
+        return None
+
+    # User-specified formula: (1 - yes_price) / (1 - true_prob)
+    no_ratio = no_price / no_true_prob
+
+    if no_ratio < 2.0:
+        return None
+
+    no_edge = no_true_prob - no_price
+    if no_edge < MIN_EDGE_ABS:
+        return None
+
+    payout_mult = round(1.0 / no_price, 2)
+
+    # Position limit check
+    adj_bet = intended_bet
+    position_limit = get_position_limit(ticker)
+    if position_limit is not None and adj_bet > position_limit:
+        adj_bet = position_limit
+
+    score = no_ratio * no_edge
+
+    return {
+        "ticker":           ticker,
+        "market_id":        market.get("event_ticker", ticker),
+        "question":         market.get("title", ""),
+        "location":         market.get("location", ""),
+        "date":             market.get("resolution_dt", "")[:10],
+        "resolution_dt":    market.get("resolution_dt", ""),
+        "metric":           market.get("metric", "temp"),
+        "threshold_type":   market.get("threshold_type", ""),
+        "bracket_low":      market.get("bracket_low"),
+        "bracket_high":     market.get("bracket_high"),
+        "side":             "NO",
+        "yes_price":        yes_price,
+        "no_price":         round(no_price, 4),
+        "true_prob":        round(true_prob, 4),
+        "no_true_prob":     round(no_true_prob, 4),
+        "edge":             round(no_edge, 4),
+        "ratio":            round(no_ratio, 2),
+        "payout_multiplier": payout_mult,
+        "score":            round(score, 6),
+        "intended_bet":     round(adj_bet, 2),
+        "position_limit":   position_limit,
+        "hours_to_resolution": market.get("_hours_to_resolution"),
+    }
+
+
+def check_reentry(
+    signal: dict,
+    open_trades: list[dict],
+    bankroll: float,
+    max_positions: int = 3,
+) -> Optional[dict]:
+    """
+    Check if a market with an existing position qualifies for re-entry.
+
+    Conditions:
+    - Existing open position on this ticker
+    - Current edge ratio > 2x the entry edge ratio
+    - Bankroll allows
+    - Under position limit
+    - Add-on capped at 1.5x original bet size
+    """
+    ticker = signal.get("ticker", "")
+    matching = [t for t in open_trades if t.get("ticker") == ticker]
+    if not matching:
+        return None
+
+    trade = matching[0]
+    entry_true_prob = trade.get("true_prob", 0)
+    entry_yes_price = trade.get("yes_price", 0)
+    original_bet    = trade.get("bet_size", 0)
+
+    if entry_yes_price <= 0:
+        return None
+
+    entry_ratio   = entry_true_prob / entry_yes_price
+    current_ratio = signal.get("ratio", 0)
+
+    if current_ratio <= entry_ratio * 2.0:
+        return None
+
+    # Cap add-on at 1.5x original bet
+    addon_bet = min(original_bet * 1.5, bankroll * 0.05)
+    if addon_bet < 1.0:
+        return None
+
+    addon_signal = dict(signal)
+    addon_signal.update({
+        "type":         "add-on",
+        "intended_bet": round(addon_bet, 2),
+        "note":         f"Re-entry: original ratio={entry_ratio:.2f}x, "
+                        f"new ratio={current_ratio:.2f}x "
+                        f"(>{entry_ratio * 2:.2f}x threshold)",
+    })
+
+    _log.info(f"Re-entry signal: {ticker} | original={entry_ratio:.2f}x → "
+              f"current={current_ratio:.2f}x | add-on=${addon_bet:.2f}")
+
+    return addon_signal
+
+
 def score_all(
     markets: list[dict],
     true_probs: dict[str, float],
     intended_bet: float = 5.0,
 ) -> list[dict]:
     """
-    Score a batch of aligned markets.
+    Score a batch of aligned markets for both YES and NO sides.
 
     Args:
         markets:      List of aligned market dicts
@@ -144,7 +271,7 @@ def score_all(
         intended_bet: Default bet size for position limit checks
 
     Returns:
-        Sorted list of signal dicts (best score first)
+        Sorted list of signal dicts (best score first), including NO signals
     """
     signals = []
     for m in markets:
@@ -154,10 +281,20 @@ def score_all(
             _log.debug(f"No true_prob for {ticker} — skipping")
             continue
 
+        # YES side
         sig = score_market(m, tp, intended_bet=intended_bet)
         if sig:
+            sig["side"] = "YES"
             signals.append(sig)
 
+        # NO side
+        no_sig = score_market_no_side(m, tp, intended_bet=intended_bet)
+        if no_sig:
+            signals.append(no_sig)
+
     signals.sort(key=lambda s: -s["score"])
-    _log.info(f"Edge scorer: {len(signals)} qualifying signals from {len(markets)} markets")
+    yes_count = sum(1 for s in signals if s.get("side") == "YES")
+    no_count  = sum(1 for s in signals if s.get("side") == "NO")
+    _log.info(f"Edge scorer: {len(signals)} signals ({yes_count} YES, {no_count} NO) "
+              f"from {len(markets)} markets")
     return signals

@@ -43,15 +43,16 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-from kalshi_scanner      import scan_markets
+from kalshi_scanner      import scan_markets, is_peak_hours, is_model_update_window
 from market_mapper       import align_markets
 from liquidity_validator import validate_batch
 from weather_ensemble    import fetch_ensemble, bracket_probability, ensemble_stats
-from edge_scorer         import score_all
+from edge_scorer         import score_all, check_reentry
 from sizing              import size_bet
 from kalshi_executor     import place_order
 from portfolio_manager   import available_slots
-from calibration         import check_market_resolution, log_resolution
+from calibration         import (check_market_resolution, log_resolution,
+                                 daily_calibration_cycle, rolling_brier_score)
 
 load_dotenv()
 
@@ -182,41 +183,71 @@ def check_resolutions(state: dict) -> dict:
 
 # ── Main scan cycle ───────────────────────────────────────────────────────────
 
+def _log_signal(signal: dict) -> None:
+    """Write signal to signals.log."""
+    with open(SIGNALS_LOG, "a") as f:
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "ticker": signal.get("ticker"),
+            "side": signal.get("side", "YES"),
+            "type": signal.get("type", "new"),
+            "question": signal.get("question"),
+            "true_prob": signal.get("true_prob"),
+            "yes_price": signal.get("yes_price"),
+            "edge": signal.get("edge"),
+            "ratio": signal.get("ratio"),
+            "intended_bet": signal.get("intended_bet"),
+            "note": signal.get("note"),
+        }
+        f.write(json.dumps(entry) + "\n")
+
+
 def run_cycle(state: dict, dry_run: bool = True) -> dict:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     state["cycles_run"] += 1
     _log.info(f"=== AUGUR Cycle #{state['cycles_run']} | {now} | "
               f"bankroll=${state['bankroll']:.2f} ===")
 
-    # Step 1: Check resolutions on open trades
+    # Step 1: Check resolutions on open trades (always, even off-peak)
     state = check_resolutions(state)
 
-    # Step 2: Portfolio cap — live API check
+    # Step 1b: Daily calibration at 6am EST (11:00 UTC) window
+    if is_model_update_window():
+        _log.info("6am EST model update window — running daily calibration cycle")
+        state["open_trades"] = daily_calibration_cycle(state["open_trades"])
+        save_state(state)
+
+    # Step 2: Peak hours check
+    if not is_peak_hours():
+        _log.info("Off-peak hours, skipping scan.")
+        return state
+
+    # Step 3: Portfolio cap — live API check
     slots = available_slots()
     if slots == 0:
         _log.info("Portfolio cap reached. Skipping scan this cycle.")
         return state
 
-    # Step 3: Scan Kalshi
-    markets = scan_markets(bankroll=state["bankroll"])
+    # Step 4: Scan Kalshi (peak check already passed)
+    markets = scan_markets(bankroll=state["bankroll"], skip_peak_check=True)
     if not markets:
         _log.info("No markets from scanner this cycle.")
         return state
 
-    # Step 4: Align markets (parse questions)
+    # Step 5: Align markets (parse questions)
     aligned = align_markets(markets)
     if not aligned:
         _log.info("No aligned markets after parsing.")
         return state
 
-    # Step 5: Liquidity validation (passive order book read)
+    # Step 6: Liquidity validation (passive order book read)
     default_bet = max(1.0, state["bankroll"] * 0.02)
     liquid = validate_batch(aligned, intended_bet=default_bet)
     if not liquid:
         _log.info("No markets passed liquidity check.")
         return state
 
-    # Step 6: Compute true probabilities via Open-Meteo ensemble
+    # Step 7: Compute true probabilities via Open-Meteo ensemble
     true_probs: dict[str, float] = {}
     for m in liquid:
         ticker = m.get("ticker", "")
@@ -224,15 +255,33 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
         if tp > 0:
             true_probs[ticker] = tp
 
-    # Step 7: Edge scoring
+    # Step 8: Edge scoring (YES + NO sides)
     signals = score_all(liquid, true_probs, intended_bet=default_bet)
+
+    # Step 8b: Filter extended window markets — only keep if edge ratio >= 5x
+    filtered_signals = []
+    for sig in signals:
+        ticker = sig["ticker"]
+        # Find the original market to check _extended_window
+        orig = next((m for m in liquid if m.get("ticker") == ticker), {})
+        if orig.get("_extended_window") and sig.get("ratio", 0) < 5.0:
+            _log.info(f"Filtered extended-window market {ticker} "
+                      f"(ratio={sig.get('ratio', 0):.1f}x < 5.0x)")
+            continue
+        filtered_signals.append(sig)
+    signals = filtered_signals
+
     if not signals:
         _log.info("No edge signals found this cycle.")
         return state
 
     _log.info(f"Found {len(signals)} signals. {slots} slots available.")
 
-    # Step 8: Size + Execute (up to available slots)
+    # Log all signals
+    for sig in signals:
+        _log_signal(sig)
+
+    # Step 9: Size + Execute (up to available slots)
     open_tickers = {t["ticker"] for t in state["open_trades"]}
 
     for signal in signals[:slots]:
@@ -240,11 +289,15 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
         if ticker in open_tickers:
             continue
 
+        side = signal.get("side", "YES")
+        true_prob_for_sizing = signal["true_prob"]
+        payout_mult = signal["payout_multiplier"]
+
         # Kelly sizing with all caps
         sizing = size_bet(
             bankroll          = state["bankroll"],
-            true_prob         = signal["true_prob"],
-            payout_multiplier = signal["payout_multiplier"],
+            true_prob         = true_prob_for_sizing if side == "YES" else signal.get("no_true_prob", true_prob_for_sizing),
+            payout_multiplier = payout_mult,
             ticker            = ticker,
             fetch_live_balance = not dry_run,
         )
@@ -254,7 +307,7 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
             continue
 
         _log.info(
-            f"Signal: {signal['question'][:60]}\n"
+            f"Signal [{side}]: {signal['question'][:60]}\n"
             f"  true_prob={signal['true_prob']:.1%} price={signal['yes_price']:.4f} "
             f"edge={signal['edge']:.1%} ratio={signal['ratio']:.1f}x "
             f"bet=${bet:.2f} kelly={sizing['kelly_fraction']:.1%}"
@@ -267,17 +320,50 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
                 "question":         signal["question"],
                 "location":         signal.get("location"),
                 "date":             signal.get("date"),
+                "side":             side,
                 "yes_price":        signal["yes_price"],
                 "true_prob":        signal["true_prob"],
-                "payout_multiplier": signal["payout_multiplier"],
+                "payout_multiplier": payout_mult,
                 "bet_size":         bet,
+                "entry_ratio":      signal.get("ratio", 0),
                 "opened_at":        datetime.now(timezone.utc).isoformat(),
             })
             state["bankroll"]  -= bet
             state["total_bets"] += 1
             open_tickers.add(ticker)
             save_state(state)
-            _log.info(f"Position opened. Bankroll: ${state['bankroll']:.2f}")
+            _log.info(f"Position opened [{side}]. Bankroll: ${state['bankroll']:.2f}")
+
+    # Step 10: Re-entry check on existing positions
+    for signal in signals:
+        addon = check_reentry(
+            signal=signal,
+            open_trades=state["open_trades"],
+            bankroll=state["bankroll"],
+        )
+        if addon:
+            _log_signal(addon)
+            addon_sizing = size_bet(
+                bankroll=state["bankroll"],
+                true_prob=addon["true_prob"],
+                payout_multiplier=addon["payout_multiplier"],
+                ticker=addon["ticker"],
+                fetch_live_balance=not dry_run,
+            )
+            addon_bet = min(addon_sizing["bet_size"], addon["intended_bet"])
+            if addon_bet > 0:
+                success = place_order(addon, addon_bet, dry_run=dry_run)
+                if success:
+                    # Update the existing trade's bet size
+                    for t in state["open_trades"]:
+                        if t["ticker"] == addon["ticker"]:
+                            t["bet_size"] += addon_bet
+                            break
+                    state["bankroll"] -= addon_bet
+                    state["total_bets"] += 1
+                    save_state(state)
+                    _log.info(f"Add-on position: {addon['ticker']} +${addon_bet:.2f} | "
+                              f"{addon.get('note', '')}")
 
     return state
 

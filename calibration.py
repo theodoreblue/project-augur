@@ -168,6 +168,105 @@ def brier_score(records: list[dict]) -> float:
     return round(sum(r["brier_score"] for r in records) / len(records), 4)
 
 
+def rolling_brier_score(weeks: int = 4) -> list[tuple[str, float]]:
+    """
+    Calculate Brier Score per ISO week for the last N weeks.
+    Returns list of (week_label, brier_score) tuples.
+    Prints warning if Brier degrades for 3+ consecutive weeks.
+    Also logs weekly scores to calibration.log.
+    """
+    records = load_records(since_days=weeks * 7)
+    if not records:
+        return []
+
+    # Group by ISO week
+    weekly: dict[str, list[dict]] = {}
+    for r in records:
+        try:
+            ts = datetime.fromisoformat(r["ts"])
+            week_label = f"{ts.isocalendar()[0]}-W{ts.isocalendar()[1]:02d}"
+        except Exception:
+            continue
+        weekly.setdefault(week_label, []).append(r)
+
+    results = []
+    for week in sorted(weekly.keys()):
+        recs = weekly[week]
+        bs = round(sum(r["brier_score"] for r in recs) / len(recs), 4)
+        results.append((week, bs))
+
+        # Log weekly brier to calibration.log
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "type": "weekly_brier",
+            "week": week,
+            "brier_score": bs,
+            "n_bets": len(recs),
+        }
+        with open(CALIBRATION_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
+        _log.info(f"Weekly Brier [{week}]: {bs:.4f} ({len(recs)} bets)")
+
+    # Check for 3 consecutive weeks of degradation
+    if len(results) >= 3:
+        consecutive_worse = 0
+        for i in range(1, len(results)):
+            if results[i][1] > results[i - 1][1]:
+                consecutive_worse += 1
+            else:
+                consecutive_worse = 0
+
+            if consecutive_worse >= 2:
+                _log.warning(
+                    f"⚠️ CALIBRATION WARNING: Brier Score degraded for 3+ consecutive weeks! "
+                    f"Recent: {', '.join(f'{w}={b:.4f}' for w, b in results[-3:])}"
+                )
+                break
+
+    return results
+
+
+def daily_calibration_cycle(open_trades: list[dict]) -> list[dict]:
+    """
+    Run the daily calibration cycle:
+    1. Pull resolutions for open trades
+    2. Calculate rolling Brier scores
+    3. Return list of still-open trades
+
+    Called from run_augur.py during 6am EST cycle.
+    """
+    still_open = []
+    for trade in open_trades:
+        ticker = trade.get("ticker")
+        outcome = check_market_resolution(ticker)
+        if outcome is None:
+            still_open.append(trade)
+            continue
+
+        pnl = (trade["bet_size"] * trade["payout_multiplier"] - trade["bet_size"]
+               if outcome else -trade["bet_size"])
+        log_resolution(
+            market_id       = ticker,
+            question        = trade.get("question", ""),
+            predicted_prob  = trade.get("true_prob", 0),
+            actual_outcome  = outcome,
+            market_price    = trade.get("yes_price", 0),
+            payout_multiplier = trade.get("payout_multiplier", 1),
+            bet_size        = trade.get("bet_size", 0),
+            pnl             = pnl,
+            city            = trade.get("location", ""),
+            date            = trade.get("date", ""),
+        )
+        _log.info(f"Calibration resolved: {trade.get('question', '')[:50]} | "
+                  f"{'WIN' if outcome else 'LOSS'} | PnL=${pnl:+.2f}")
+
+    # Run rolling Brier check
+    rolling_brier_score(weeks=4)
+
+    return still_open
+
+
 def weekly_summary() -> str:
     """
     Print a weekly calibration summary showing:

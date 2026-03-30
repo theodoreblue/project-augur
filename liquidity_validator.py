@@ -36,8 +36,10 @@ load_dotenv()
 
 _log = logging.getLogger(__name__)
 
-DEPTH_MULTIPLIER = 3.0    # require depth >= 3x intended bet
-SKIPPED_LOG      = "skipped.log"
+DEPTH_MULTIPLIER     = 2.0    # require depth >= 2x intended bet
+NEAR_MISS_THRESHOLD  = 3.0   # log near misses that pass 2x but fail 3x
+SKIPPED_LOG          = "skipped.log"
+NEAR_MISS_LOG        = "near_miss.log"
 KALSHI_BASE      = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
 KALSHI_DEMO_BASE = os.getenv("KALSHI_DEMO_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
 
@@ -158,10 +160,30 @@ def validate(
     if depth < required:
         _log_skipped(ticker, question,
                      f"insufficient_liquidity: depth=${depth:.2f} "
-                     f"required=${required:.2f} (3x ${intended_bet:.2f})")
+                     f"required=${required:.2f} (2x ${intended_bet:.2f})")
         return False
 
+    # Near miss: passes 2x but would fail 3x — log for monitoring
+    required_3x = NEAR_MISS_THRESHOLD * intended_bet
+    if depth < required_3x:
+        _log_near_miss(ticker, question, depth, required, required_3x)
+
     return True
+
+
+def _log_near_miss(ticker: str, question: str, depth: float,
+                   required_2x: float, required_3x: float) -> None:
+    """Log markets that pass 2x depth but fail 3x for monitoring."""
+    with open(NEAR_MISS_LOG, "a") as f:
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "ticker": ticker,
+            "question": question,
+            "depth": depth,
+            "required_2x": round(required_2x, 2),
+            "required_3x": round(required_3x, 2),
+        }
+        f.write(json.dumps(entry) + "\n")
 
 
 def validate_batch(
