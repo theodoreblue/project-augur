@@ -41,6 +41,11 @@ CITIES = {
 
 N_MEMBERS = 25  # ICON seamless ensemble size
 
+# Bias correction: Open-Meteo ensemble systematically underestimates high temps
+# by ~1-3°F vs NWS station readings (grid cell avg vs point measurement).
+# Calibrated from Denver (-2°F) and Miami (-1.1°F) post-mortems 2026-03-24.
+TEMP_BIAS_CORRECTION_F = 2.0
+
 
 def _cache_path(city: str) -> Path:
     CACHE_DIR.mkdir(exist_ok=True)
@@ -129,7 +134,7 @@ def fetch_ensemble(city: str, forecast_days: int = 7) -> dict:
         member_maxes = []
         for m_vals in date_members[date_str]:
             if m_vals:
-                member_maxes.append(round(_c_to_f(max(m_vals)), 1))
+                member_maxes.append(round(_c_to_f(max(m_vals)) + TEMP_BIAS_CORRECTION_F, 1))
         if member_maxes:
             result["dates"][date_str] = member_maxes
 
