@@ -51,57 +51,58 @@ _METEO_MAPPING = {
 }
 
 # ── City → lat/lon lookup ─────────────────────────────────────────────────────
+# Airport station coordinates — Kalshi settles on these stations
 CITY_COORDS: dict[str, dict] = {
-    "New York":       {"lat": 40.7128,  "lon": -74.0060},
-    "NYC":            {"lat": 40.7128,  "lon": -74.0060},
-    "New York City":  {"lat": 40.7128,  "lon": -74.0060},
-    "Los Angeles":    {"lat": 34.0522,  "lon": -118.2437},
-    "LA":             {"lat": 34.0522,  "lon": -118.2437},
-    "Chicago":        {"lat": 41.8781,  "lon": -87.6298},
-    "Houston":        {"lat": 29.7604,  "lon": -95.3698},
-    "Phoenix":        {"lat": 33.4484,  "lon": -112.0740},
-    "Philadelphia":   {"lat": 39.9526,  "lon": -75.1652},
-    "Philly":         {"lat": 39.9526,  "lon": -75.1652},
-    "San Antonio":    {"lat": 29.4241,  "lon": -98.4936},
-    "San Diego":      {"lat": 32.7157,  "lon": -117.1611},
-    "Dallas":         {"lat": 32.7767,  "lon": -96.7970},
-    "Austin":         {"lat": 30.2672,  "lon": -97.7431},
-    "Jacksonville":   {"lat": 30.3322,  "lon": -81.6557},
-    "Columbus":       {"lat": 39.9612,  "lon": -82.9988},
-    "Charlotte":      {"lat": 35.2271,  "lon": -80.8431},
-    "Indianapolis":   {"lat": 39.7684,  "lon": -86.1581},
-    "Seattle":        {"lat": 47.6062,  "lon": -122.3321},
-    "Denver":         {"lat": 39.7392,  "lon": -104.9903},
-    "Nashville":      {"lat": 36.1627,  "lon": -86.7816},
-    "Miami":          {"lat": 25.7617,  "lon": -80.1918},
-    "Atlanta":        {"lat": 33.7490,  "lon": -84.3880},
-    "Boston":         {"lat": 42.3601,  "lon": -71.0589},
-    "Las Vegas":      {"lat": 36.1699,  "lon": -115.1398},
-    "Portland":       {"lat": 45.5051,  "lon": -122.6750},
-    "Memphis":        {"lat": 35.1495,  "lon": -90.0490},
-    "Baltimore":      {"lat": 39.2904,  "lon": -76.6122},
-    "Milwaukee":      {"lat": 43.0389,  "lon": -87.9065},
-    "Albuquerque":    {"lat": 35.0844,  "lon": -106.6504},
-    "Tucson":         {"lat": 32.2226,  "lon": -110.9747},
-    "Sacramento":     {"lat": 38.5816,  "lon": -121.4944},
-    "Kansas City":    {"lat": 39.0997,  "lon": -94.5786},
-    "Omaha":          {"lat": 41.2565,  "lon": -95.9345},
-    "Raleigh":        {"lat": 35.7796,  "lon": -78.6382},
-    "Cleveland":      {"lat": 41.4993,  "lon": -81.6944},
-    "Minneapolis":    {"lat": 44.9778,  "lon": -93.2650},
-    "New Orleans":    {"lat": 29.9511,  "lon": -90.0715},
-    "Tampa":          {"lat": 27.9506,  "lon": -82.4572},
-    "Pittsburgh":     {"lat": 40.4406,  "lon": -79.9959},
-    "Cincinnati":     {"lat": 39.1031,  "lon": -84.5120},
-    "St. Louis":      {"lat": 38.6270,  "lon": -90.1994},
-    "Reno":           {"lat": 39.5296,  "lon": -119.8138},
-    "Salt Lake City": {"lat": 40.7608,  "lon": -111.8910},
-    "Oklahoma City":  {"lat": 35.4676,  "lon": -97.5164},
-    "OKC":            {"lat": 35.4676,  "lon": -97.5164},
-    "San Francisco":  {"lat": 37.7749,  "lon": -122.4194},
-    "SF":             {"lat": 37.7749,  "lon": -122.4194},
-    "San Jose":       {"lat": 37.3382,  "lon": -121.8863},
-    "Fort Worth":     {"lat": 32.7555,  "lon": -97.3308},
+    "New York":       {"lat": 40.6413,  "lon": -73.7781},   # KJFK
+    "NYC":            {"lat": 40.6413,  "lon": -73.7781},   # KJFK
+    "New York City":  {"lat": 40.6413,  "lon": -73.7781},   # KJFK
+    "Los Angeles":    {"lat": 33.9416,  "lon": -118.4085},  # KLAX
+    "LA":             {"lat": 33.9416,  "lon": -118.4085},  # KLAX
+    "Chicago":        {"lat": 41.9742,  "lon": -87.9073},   # KORD
+    "Houston":        {"lat": 29.9844,  "lon": -95.3414},   # KIAH
+    "Phoenix":        {"lat": 33.4373,  "lon": -112.0078},  # KPHX
+    "Philadelphia":   {"lat": 39.8721,  "lon": -75.2411},   # KPHL
+    "Philly":         {"lat": 39.8721,  "lon": -75.2411},   # KPHL
+    "San Antonio":    {"lat": 29.5337,  "lon": -98.4698},   # KSAT
+    "San Diego":      {"lat": 32.7336,  "lon": -117.1897},  # KSAN
+    "Dallas":         {"lat": 32.8998,  "lon": -97.0403},   # KDFW
+    "Austin":         {"lat": 30.1944,  "lon": -97.6700},   # KAUS
+    "Jacksonville":   {"lat": 30.4941,  "lon": -81.6879},   # KJAX
+    "Columbus":       {"lat": 39.9980,  "lon": -82.8919},   # KCMH
+    "Charlotte":      {"lat": 35.2140,  "lon": -80.9431},   # KCLT
+    "Indianapolis":   {"lat": 39.7173,  "lon": -86.2944},   # KIND
+    "Seattle":        {"lat": 47.4502,  "lon": -122.3088},  # KSEA
+    "Denver":         {"lat": 39.8561,  "lon": -104.6737},  # KDEN
+    "Nashville":      {"lat": 36.1245,  "lon": -86.6782},   # KBNA
+    "Miami":          {"lat": 25.7959,  "lon": -80.2870},   # KMIA
+    "Atlanta":        {"lat": 33.6407,  "lon": -84.4277},   # KATL
+    "Boston":         {"lat": 42.3656,  "lon": -71.0096},   # KBOS
+    "Las Vegas":      {"lat": 36.0840,  "lon": -115.1537},  # KLAS
+    "Portland":       {"lat": 45.5887,  "lon": -122.5975},  # KPDX
+    "Memphis":        {"lat": 35.0424,  "lon": -89.9767},   # KMEM
+    "Baltimore":      {"lat": 39.1754,  "lon": -76.6684},   # KBWI
+    "Milwaukee":      {"lat": 42.9472,  "lon": -87.8966},   # KMKE
+    "Albuquerque":    {"lat": 35.0402,  "lon": -106.6090},  # KABQ
+    "Tucson":         {"lat": 32.1161,  "lon": -110.9410},  # KTUS
+    "Sacramento":     {"lat": 38.6955,  "lon": -121.5908},  # KSMF
+    "Kansas City":    {"lat": 39.2976,  "lon": -94.7139},   # KMCI
+    "Omaha":          {"lat": 41.3032,  "lon": -95.8941},   # KOMA
+    "Raleigh":        {"lat": 35.8776,  "lon": -78.7875},   # KRDU
+    "Cleveland":      {"lat": 41.4117,  "lon": -81.8498},   # KCLE
+    "Minneapolis":    {"lat": 44.8848,  "lon": -93.2223},   # KMSP
+    "New Orleans":    {"lat": 29.9934,  "lon": -90.2580},   # KMSY
+    "Tampa":          {"lat": 27.9755,  "lon": -82.5332},   # KTPA
+    "Pittsburgh":     {"lat": 40.4915,  "lon": -80.2329},   # KPIT
+    "Cincinnati":     {"lat": 39.0489,  "lon": -84.6678},   # KCVG
+    "St. Louis":      {"lat": 38.7487,  "lon": -90.3700},   # KSTL
+    "Reno":           {"lat": 39.4991,  "lon": -119.7681},  # KRNO
+    "Salt Lake City": {"lat": 40.7884,  "lon": -111.9778},  # KSLC
+    "Oklahoma City":  {"lat": 35.3931,  "lon": -97.6007},   # KOKC
+    "OKC":            {"lat": 35.3931,  "lon": -97.6007},   # KOKC
+    "San Francisco":  {"lat": 37.6213,  "lon": -122.3790},  # KSFO
+    "SF":             {"lat": 37.6213,  "lon": -122.3790},  # KSFO
+    "San Jose":       {"lat": 37.3626,  "lon": -121.9291},  # KSJC
+    "Fort Worth":     {"lat": 32.8998,  "lon": -97.0403},   # KDFW (shared with Dallas)
 }
 
 # Build lowercase lookup — longest match wins

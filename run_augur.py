@@ -100,23 +100,24 @@ def save_state(state: dict) -> None:
 
 # ── Ensemble probability for a market ─────────────────────────────────────────
 
-def compute_true_prob(market: dict) -> tuple[float, list[float]]:
+def compute_true_prob(market: dict) -> tuple[float, list[float], dict]:
     """
     Fetch Open-Meteo ensemble for this market's city/date and compute
     true probability for the market's specific threshold.
 
     Returns:
-        (probability, ensemble_members) — members list for safety checks
+        (probability, ensemble_members, stats_dict) — members list for safety checks,
+        stats_dict contains mean/std/min/max/n for spread confidence
     """
     city = market.get("location")
     if not city:
-        return 0.0, []
+        return 0.0, [], {}
 
     try:
         ensemble = fetch_ensemble(city)
     except Exception as e:
         _log.warning(f"Ensemble fetch failed for {city}: {e}")
-        return 0.0, []
+        return 0.0, [], {}
 
     # Get member max temps for the resolution date
     res_date = (market.get("resolution_dt") or "")[:10]
@@ -128,7 +129,10 @@ def compute_true_prob(market: dict) -> tuple[float, list[float]]:
             members = ensemble["dates"][dates[0]]
 
     if not members:
-        return 0.0, []
+        return 0.0, [], {}
+
+    # Compute ensemble stats for spread confidence
+    stats = ensemble_stats(members)
 
     metric = market.get("metric", "temp")
     ttype  = market.get("threshold_type", "bracket")
@@ -146,7 +150,7 @@ def compute_true_prob(market: dict) -> tuple[float, list[float]]:
     else:
         _log.debug(f"Metric '{metric}' not fully modeled — skipping probability calc")
 
-    return prob, members
+    return prob, members, stats
 
 
 # ── Calibration check ─────────────────────────────────────────────────────────
@@ -280,15 +284,20 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
 
     # Step 7: Compute true probabilities + safety checks
     true_probs: dict[str, float] = {}
+    ensemble_stds: dict[str, float] = {}  # spread confidence data
     size_multipliers: dict[str, float] = {}  # safety-adjusted sizing
     safety_skips: set[str] = set()
 
     for m in liquid:
         ticker = m.get("ticker", "")
-        tp, members = compute_true_prob(m)
+        tp, members, stats = compute_true_prob(m)
         if tp <= 0:
             continue
         true_probs[ticker] = tp
+        if stats.get("std"):
+            ensemble_stds[ticker] = stats["std"]
+            _log.debug(f"Ensemble stats for {ticker}: mean={stats['mean']}°F "
+                       f"std={stats['std']}°F n={stats['n']}")
 
         city = m.get("location", "")
         res_date = (m.get("resolution_dt") or "")[:10]
@@ -318,8 +327,9 @@ def run_cycle(state: dict, dry_run: bool = True) -> dict:
             true_probs.pop(t, None)
         _log.info(f"Safety: skipped {len(safety_skips)} markets due to NWS divergence")
 
-    # Step 8: Edge scoring (YES + NO sides)
-    signals = score_all(liquid, true_probs, intended_bet=default_bet)
+    # Step 8: Edge scoring (YES + NO sides) with spread confidence
+    signals = score_all(liquid, true_probs, intended_bet=default_bet,
+                        ensemble_stds=ensemble_stds)
 
     # Step 8b: Filter extended window markets — only keep if edge ratio >= 5x
     filtered_signals = []

@@ -36,6 +36,26 @@ MIN_EDGE_ABS     = 0.03   # absolute edge (true_prob - price) >= 3%
 MIN_TRUE_PROB    = 0.65   # minimum confidence threshold — reject below 65%
 SKIPPED_LOG      = "skipped.log"
 
+
+def spread_confidence_factor(std_dev: float) -> float:
+    """
+    Reduce confidence when ensemble spread is wide.
+    Wide model disagreement = uncertain forecast = lower bet confidence.
+
+    std < 2°F:  full confidence (1.0)
+    std 2-4°F:  moderate reduction (0.8-1.0)
+    std 4-8°F:  significant reduction (0.5-0.8)
+    std > 8°F:  heavy reduction (0.3-0.5)
+    """
+    if std_dev <= 2.0:
+        return 1.0
+    elif std_dev <= 4.0:
+        return 1.0 - 0.1 * (std_dev - 2.0)   # 1.0 → 0.8
+    elif std_dev <= 8.0:
+        return 0.8 - 0.075 * (std_dev - 4.0)  # 0.8 → 0.5
+    else:
+        return max(0.3, 0.5 - 0.02 * (std_dev - 8.0))
+
 KALSHI_BASE      = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
 KALSHI_DEMO_BASE = os.getenv("KALSHI_DEMO_BASE_URL", "https://demo-api.kalshi.co/trade-api/v2")
 
@@ -72,14 +92,17 @@ def score_market(
     market: dict,
     true_prob: float,
     intended_bet: float = 5.0,
+    ensemble_std: float = None,
 ) -> Optional[dict]:
     """
     Score one aligned market for edge.
 
     Args:
-        market:       Aligned market dict (from market_mapper.py)
-        true_prob:    Ensemble true probability (from weather_ensemble.py)
-        intended_bet: Intended bet size in USD (for position limit check)
+        market:        Aligned market dict (from market_mapper.py)
+        true_prob:     Ensemble true probability (from weather_ensemble.py)
+        intended_bet:  Intended bet size in USD (for position limit check)
+        ensemble_std:  Standard deviation of ensemble members (°F). If provided,
+                       applies spread confidence penalty to true_prob.
 
     Returns:
         Signal dict if edge qualifies, None if not.
@@ -89,6 +112,11 @@ def score_market(
 
     if yes_price <= 0 or true_prob <= 0:
         return None
+
+    # Apply spread confidence penalty if ensemble stats available
+    if ensemble_std is not None:
+        confidence = spread_confidence_factor(ensemble_std)
+        true_prob = true_prob * confidence
 
     # Minimum confidence filter — reject low-probability signals
     if true_prob < MIN_TRUE_PROB:
@@ -157,6 +185,7 @@ def score_market_no_side(
     market: dict,
     true_prob: float,
     intended_bet: float = 5.0,
+    ensemble_std: float = None,
 ) -> Optional[dict]:
     """
     Score a market for NO-side edge.
@@ -169,6 +198,11 @@ def score_market_no_side(
     """
     ticker    = market.get("ticker", "")
     yes_price = market.get("_yes_price", 0)
+
+    # Apply spread confidence penalty for NO side too
+    if ensemble_std is not None:
+        confidence = spread_confidence_factor(ensemble_std)
+        true_prob = true_prob * confidence
 
     if yes_price <= 0 or yes_price >= 1 or true_prob >= 0.5:
         return None
@@ -284,14 +318,17 @@ def score_all(
     markets: list[dict],
     true_probs: dict[str, float],
     intended_bet: float = 5.0,
+    ensemble_stds: dict[str, float] = None,
 ) -> list[dict]:
     """
     Score a batch of aligned markets for both YES and NO sides.
 
     Args:
-        markets:      List of aligned market dicts
-        true_probs:   Dict mapping ticker → true_prob from ensemble
-        intended_bet: Default bet size for position limit checks
+        markets:        List of aligned market dicts
+        true_probs:     Dict mapping ticker → true_prob from ensemble
+        intended_bet:   Default bet size for position limit checks
+        ensemble_stds:  Dict mapping ticker → ensemble std dev (°F) for
+                        spread confidence penalty. If None, no penalty applied.
 
     Returns:
         Sorted list of signal dicts (best score first), including NO signals
@@ -300,6 +337,8 @@ def score_all(
     no_evaluated = 0
     best_no_ratio = 0.0
     no_qualified = 0
+    if ensemble_stds is None:
+        ensemble_stds = {}
 
     for m in markets:
         ticker = m.get("ticker", "")
@@ -308,8 +347,10 @@ def score_all(
             _log.debug(f"No true_prob for {ticker} — skipping")
             continue
 
+        std = ensemble_stds.get(ticker)
+
         # YES side
-        sig = score_market(m, tp, intended_bet=intended_bet)
+        sig = score_market(m, tp, intended_bet=intended_bet, ensemble_std=std)
         if sig:
             sig["side"] = "YES"
             signals.append(sig)
@@ -324,7 +365,7 @@ def score_all(
                 this_no_ratio = no_price / no_true_prob
                 best_no_ratio = max(best_no_ratio, this_no_ratio)
 
-        no_sig = score_market_no_side(m, tp, intended_bet=intended_bet)
+        no_sig = score_market_no_side(m, tp, intended_bet=intended_bet, ensemble_std=std)
         if no_sig:
             no_qualified += 1
             signals.append(no_sig)
